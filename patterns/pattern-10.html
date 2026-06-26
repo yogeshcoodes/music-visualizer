@@ -4,7 +4,7 @@
     <style>
         * { margin: 0; padding: 0; }
         body { background: transparent; overflow: hidden; }
-        canvas { display: block; width: 100vw; height: 100vh; background-color: #000; }
+        canvas { display: block; width: 100vw; height: 100vh; background-color: #fff; }
     </style>
 </head>
 <body>
@@ -20,74 +20,49 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // ── Fixed grid of dots ─────────────────────────────────────
-        const cols = 28;
-        const rows = 18;
-        const marginX = canvas.width * 0.08;
-        const marginY = canvas.height * 0.08;
-        const spacingX = (canvas.width - marginX * 2) / (cols - 1);
-        const spacingY = (canvas.height - marginY * 2) / (rows - 1);
-
-        const basePositions = [];
-        for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-                basePositions.push({
-                    x: marginX + c * spacingX,
-                    y: marginY + r * spacingY
-                });
-            }
-        }
-
-        // Map each dot to a frequency bin (wrap around)
-        const totalDots = basePositions.length;
-        const binsToUse = 150;  // first 150 bins, like before
-        const binMap = basePositions.map((_, i) => Math.floor(i * (binsToUse / totalDots)));
+        const NUM_BARS = 45;
+        const BINS_TO_USE = 150; // only use first 150 frequency bins
+        const MIN_BAR_THICKNESS = 2; // resting thickness (pixels)
 
         function draw() {
             requestAnimationFrame(draw);
 
-            // Clear
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const W = canvas.width;
+            const H = canvas.height;
+
+            // ── White background (classic barcode look) ──────────
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, W, H);
 
             const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+            const sliceWidth = W / NUM_BARS;
+            const barHeight = H * 0.8;
+            const barY = (H - barHeight) / 2;
 
-            // ── Idle state: perfectly still grid ──────────────────
             if (!data || !data.frequencyData) {
-                ctx.fillStyle = '#ffffff';
-                for (const pos of basePositions) {
-                    ctx.fillRect(pos.x - 1, pos.y - 1, 2, 2);
+                // Idle: thin, even bars
+                ctx.fillStyle = '#000000';
+                for (let i = 0; i < NUM_BARS; i++) {
+                    const x = i * sliceWidth + sliceWidth / 2;
+                    const barWidth = MIN_BAR_THICKNESS;
+                    ctx.fillRect(x - barWidth / 2, barY, barWidth, barHeight);
                 }
                 return;
             }
 
             const freqData = data.frequencyData;
+            ctx.fillStyle = '#000000';
 
-            // ── Draw quivering dots ──────────────────────────────
-            ctx.fillStyle = '#ffffff';
-            for (let i = 0; i < totalDots; i++) {
-                const base = basePositions[i];
-                const binIndex = binMap[i];
-                const amplitude = freqData[binIndex]; // 0-255
+            for (let i = 0; i < NUM_BARS; i++) {
+                const binIndex = Math.floor(i * (BINS_TO_USE / NUM_BARS));
+                const amplitude = freqData[binIndex]; // 0–255
 
-                // How much the dot can randomly jitter (pixels)
-                const jitterRadius = (amplitude / 255) * 14;  // max 14px shake
+                // Map amplitude to bar thickness – maximum is 70% of slice width
+                const maxThickness = sliceWidth * 0.7;
+                const barWidth = MIN_BAR_THICKNESS + (amplitude / 255) * (maxThickness - MIN_BAR_THICKNESS);
 
-                let offsetX = 0;
-                let offsetY = 0;
-                if (jitterRadius > 0.1) {
-                    // Use a pseudo-random angle that changes every frame
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = Math.random() * jitterRadius;
-                    offsetX = Math.cos(angle) * dist;
-                    offsetY = Math.sin(angle) * dist;
-                }
-
-                const x = base.x + offsetX;
-                const y = base.y + offsetY;
-
-                // Draw a small dot (2x2 pixel square)
-                ctx.fillRect(x - 1, y - 1, 2, 2);
+                const x = i * sliceWidth + sliceWidth / 2 - barWidth / 2;
+                ctx.fillRect(x, barY, barWidth, barHeight);
             }
         }
 
