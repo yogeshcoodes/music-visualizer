@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: transparent; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; background-color: #000; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // ── Fixed grid of dots ─────────────────────────────────────
+        const cols = 28;
+        const rows = 18;
+        const marginX = canvas.width * 0.08;
+        const marginY = canvas.height * 0.08;
+        const spacingX = (canvas.width - marginX * 2) / (cols - 1);
+        const spacingY = (canvas.height - marginY * 2) / (rows - 1);
+
+        const basePositions = [];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                basePositions.push({
+                    x: marginX + c * spacingX,
+                    y: marginY + r * spacingY
+                });
+            }
+        }
+
+        // Map each dot to a frequency bin (wrap around)
+        const totalDots = basePositions.length;
+        const binsToUse = 150;  // first 150 bins, like before
+        const binMap = basePositions.map((_, i) => Math.floor(i * (binsToUse / totalDots)));
+
+        function draw() {
+            requestAnimationFrame(draw);
+
+            // Clear
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+
+            // ── Idle state: perfectly still grid ──────────────────
+            if (!data || !data.frequencyData) {
+                ctx.fillStyle = '#ffffff';
+                for (const pos of basePositions) {
+                    ctx.fillRect(pos.x - 1, pos.y - 1, 2, 2);
+                }
+                return;
+            }
+
+            const freqData = data.frequencyData;
+
+            // ── Draw quivering dots ──────────────────────────────
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < totalDots; i++) {
+                const base = basePositions[i];
+                const binIndex = binMap[i];
+                const amplitude = freqData[binIndex]; // 0-255
+
+                // How much the dot can randomly jitter (pixels)
+                const jitterRadius = (amplitude / 255) * 14;  // max 14px shake
+
+                let offsetX = 0;
+                let offsetY = 0;
+                if (jitterRadius > 0.1) {
+                    // Use a pseudo-random angle that changes every frame
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * jitterRadius;
+                    offsetX = Math.cos(angle) * dist;
+                    offsetY = Math.sin(angle) * dist;
+                }
+
+                const x = base.x + offsetX;
+                const y = base.y + offsetY;
+
+                // Draw a small dot (2x2 pixel square)
+                ctx.fillRect(x - 1, y - 1, 2, 2);
+            }
+        }
+
+        draw();
+    </script>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>calm · light spectrum</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            cursor: default;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        (() => {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            let W, H, centerY;
+
+            // ---------- SOOTHING PALETTE (warm amber → soft rose → muted teal) ----------
+            // No neon, no harsh RGB — just calm, aesthetic colors
+            const palette = [
+                { r: 235, g: 180, b: 150 }, // warm peach
+                { r: 220, g: 170, b: 160 }, // dusty rose
+                { r: 200, g: 175, b: 180 }, // muted mauve
+                { r: 180, g: 180, b: 190 }, // soft lavender-gray
+                { r: 160, g: 185, b: 195 }, // muted teal
+                { r: 150, g: 190, b: 185 }, // sage
+                { r: 170, g: 195, b: 180 }, // sea glass
+            ];
+
+            // ---------- STATE ----------
+            const NUM_BARS = 40;
+            const BINS_TO_USE = 150;
+
+            // Smoothed heights
+            let smoothHeights = new Array(NUM_BARS).fill(0);
+
+            // For a gentle floating effect, we add a slow sine wave offset
+            let time = 0;
+
+            // ---------- RESIZE ----------
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+                centerY = H * 0.72;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ---------- UTILITY ----------
+            function lerp(a, b, t) { return a + (b - a) * t; }
+
+            function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+            // Get color from palette based on index
+            function getColor(i, total) {
+                const ratio = i / total;
+                const idx = ratio * (palette.length - 1);
+                const i0 = Math.floor(idx);
+                const i1 = Math.min(i0 + 1, palette.length - 1);
+                const frac = idx - i0;
+                const c0 = palette[i0];
+                const c1 = palette[i1];
+                return {
+                    r: lerp(c0.r, c1.r, frac),
+                    g: lerp(c0.g, c1.g, frac),
+                    b: lerp(c0.b, c1.b, frac),
+                };
+            }
+
+            // ---------- DRAW ----------
+            function draw() {
+                requestAnimationFrame(draw);
+                time += 0.008;
+
+                // ---- Get audio data ----
+                const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+
+                // ---- Compute raw heights ----
+                let rawHeights;
+                if (data && data.frequencyData) {
+                    const freqData = data.frequencyData;
+                    rawHeights = [];
+                    for (let i = 0; i < NUM_BARS; i++) {
+                        const binIndex = Math.floor(i * (BINS_TO_USE / NUM_BARS));
+                        const val = freqData[Math.min(binIndex, freqData.length - 1)] || 0;
+                        let norm = val / 255;
+                        // Soft curve for gentle response
+                        norm = Math.pow(norm, 0.8);
+                        // Map to height: min 2px, max 45% of canvas height
+                        const maxH = H * 0.45;
+                        const minH = H * 0.012;
+                        const h = minH + norm * (maxH - minH);
+                        rawHeights.push(h);
+                    }
+                } else {
+                    // No audio: tiny resting waves
+                    rawHeights = new Array(NUM_BARS).fill(H * 0.015);
+                    for (let i = 0; i < NUM_BARS; i++) {
+                        const wave = Math.sin(i * 0.5 + time * 1.2) * 0.5 + 0.5;
+                        rawHeights[i] += wave * H * 0.012;
+                    }
+                }
+
+                // ---- Smooth heights ----
+                const SMOOTH = 0.12;
+                for (let i = 0; i < NUM_BARS; i++) {
+                    const target = rawHeights[i];
+                    const current = smoothHeights[i];
+                    const diff = target - current;
+                    const step = diff * SMOOTH + diff * 0.02;
+                    smoothHeights[i] = current + step;
+                    if (smoothHeights[i] < 0.3) smoothHeights[i] = 0.3;
+                }
+
+                // ---- Clear canvas (black) ----
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, W, H);
+
+                // ---- Subtle background glow (very faint) ----
+                const bgGrad = ctx.createRadialGradient(W / 2, H * 0.9, 0, W / 2, H * 0.9, H * 0.55);
+                bgGrad.addColorStop(0, 'rgba(30, 25, 35, 0.12)');
+                bgGrad.addColorStop(0.5, 'rgba(15, 12, 20, 0.06)');
+                bgGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                // ---- Draw bars ----
+                const barWidth = W / NUM_BARS;
+                const padding = barWidth * 0.15;
+                const drawWidth = barWidth - padding * 2;
+                const baseY = centerY;
+
+                // Pre-calculate x positions
+                const xPositions = [];
+                for (let i = 0; i < NUM_BARS; i++) {
+                    xPositions.push(i * barWidth + barWidth / 2);
+                }
+
+                // For each bar, draw with glow and gradient
+                for (let i = 0; i < NUM_BARS; i++) {
+                    const x = xPositions[i];
+                    const h = smoothHeights[i];
+                    const color = getColor(i, NUM_BARS);
+
+                    // Soft, rounded rectangle
+                    const radius = Math.min(drawWidth / 2, 6);
+                    const topY = baseY - h;
+
+                    // ---- 1. Outer glow (soft, wide) ----
+                    const glowSize = Math.max(drawWidth * 2, 20 + h * 0.15);
+                    const gradGlow = ctx.createRadialGradient(
+                        x, baseY - h * 0.3, 0,
+                        x, baseY - h * 0.3, glowSize
+                    );
+                    const alphaGlow = Math.min(0.12, 0.02 + h * 0.00025);
+                    gradGlow.addColorStop(0, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, ${alphaGlow})`);
+                    gradGlow.addColorStop(0.5, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, ${alphaGlow * 0.5})`);
+                    gradGlow.addColorStop(1, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, 0)`);
+                    ctx.fillStyle = gradGlow;
+                    ctx.beginPath();
+                    ctx.arc(x, baseY - h * 0.3, glowSize, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // ---- 2. Main bar with gradient (top lighter, bottom darker) ----
+                    const gradBar = ctx.createLinearGradient(x, topY, x, baseY);
+                    const bright = 1.0;
+                    const dark = 0.5;
+                    gradBar.addColorStop(0, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, ${bright})`);
+                    gradBar.addColorStop(0.5, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, ${bright * 0.85})`);
+                    gradBar.addColorStop(1, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, ${dark})`);
+
+                    ctx.fillStyle = gradBar;
+
+                    // Rounded rect
+                    const w = drawWidth;
+                    const hRect = h;
+                    const r = radius;
+                    ctx.beginPath();
+                    ctx.moveTo(x - w / 2 + r, topY);
+                    ctx.lineTo(x + w / 2 - r, topY);
+                    ctx.quadraticCurveTo(x + w / 2, topY, x + w / 2, topY + r);
+                    ctx.lineTo(x + w / 2, baseY - r);
+                    ctx.quadraticCurveTo(x + w / 2, baseY, x + w / 2 - r, baseY);
+                    ctx.lineTo(x - w / 2 + r, baseY);
+                    ctx.quadraticCurveTo(x - w / 2, baseY, x - w / 2, baseY - r);
+                    ctx.lineTo(x - w / 2, topY + r);
+                    ctx.quadraticCurveTo(x - w / 2, topY, x - w / 2 + r, topY);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // ---- 3. Soft top highlight (tiny bright line) ----
+                    if (h > 3) {
+                        const highlightGrad = ctx.createLinearGradient(x, topY, x, topY + Math.min(h * 0.1, 6));
+                        highlightGrad.addColorStop(0, `rgba(255, 255, 255, 0.2)`);
+                        highlightGrad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                        ctx.fillStyle = highlightGrad;
+                        ctx.beginPath();
+                        ctx.moveTo(x - w / 2 + r, topY);
+                        ctx.lineTo(x + w / 2 - r, topY);
+                        ctx.quadraticCurveTo(x + w / 2, topY, x + w / 2, topY + r);
+                        ctx.lineTo(x + w / 2, topY + Math.min(h * 0.1, 6));
+                        ctx.lineTo(x - w / 2, topY + Math.min(h * 0.1, 6));
+                        ctx.lineTo(x - w / 2, topY + r);
+                        ctx.quadraticCurveTo(x - w / 2, topY, x - w / 2 + r, topY);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+
+                    // ---- 4. Bottom reflection (tiny glow at base) ----
+                    const baseGlow = ctx.createRadialGradient(x, baseY, 0, x, baseY, drawWidth * 0.8);
+                    baseGlow.addColorStop(0, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, 0.06)`);
+                    baseGlow.addColorStop(1, `rgba(${color.r|0}, ${color.g|0}, ${color.b|0}, 0)`);
+                    ctx.fillStyle = baseGlow;
+                    ctx.beginPath();
+                    ctx.arc(x, baseY, drawWidth * 0.8, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // ---- 5. Tiny dot at the top (soft sparkle) ----
+                    if (h > H * 0.04) {
+                        const dotSize = Math.min(4, 1 + h * 0.008);
+                        const dotAlpha = Math.min(0.4, 0.1 + h * 0.0008);
+                        ctx.fillStyle = `rgba(255, 255, 255, ${dotAlpha})`;
+                        ctx.beginPath();
+                        ctx.arc(x, topY, dotSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // ---- Very subtle horizontal connecting lines (barely visible) ----
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.015)';
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                for (let i = 0; i < NUM_BARS - 1; i++) {
+                    const x1 = xPositions[i];
+                    const x2 = xPositions[i + 1];
+                    const h1 = smoothHeights[i];
+                    const h2 = smoothHeights[i + 1];
+                    const y1 = baseY - h1 * 0.1;
+                    const y2 = baseY - h2 * 0.1;
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                }
+                ctx.stroke();
+
+                // ---- Tiny ambient particles (floating dust) ----
+                // Only a few, very subtle
+                const numParticles = 12;
+                for (let i = 0; i < numParticles; i++) {
+                    const seed = i * 0.7 + 1.2;
+                    const px = (Math.sin(seed * 2.3 + time * 0.2) * 0.5 + 0.5) * W;
+                    const py = (Math.cos(seed * 1.7 + time * 0.15) * 0.3 + 0.7) * H;
+                    const size = 0.5 + Math.sin(seed * 3.1 + time * 0.5) * 0.3 + 0.5;
+                    const alpha = 0.03 + Math.sin(seed * 2.9 + time * 0.3) * 0.02 + 0.02;
+                    ctx.fillStyle = `rgba(200, 190, 180, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(px, py, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            draw();
+        })();
+    </script>
+</body>
+</html>

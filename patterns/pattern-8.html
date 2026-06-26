@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dancing Pentagon & Hexagon</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // ──────────────────────────────────────
+            // Responsive sizing
+            // ──────────────────────────────────────
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ──────────────────────────────────────
+            // Configuration
+            // ──────────────────────────────────────
+            const PENT_SIDES = 5;
+            const HEX_SIDES = 6;
+
+            // Smoothing factors for frequency bands
+            const smoothing = 0.28;
+            const minVisibility = 0.06;   // resting amplitude so lines never fully vanish
+
+            // Pent & Hex band arrays (smoothed)
+            let pentBands = new Array(PENT_SIDES).fill(minVisibility);
+            let hexBands = new Array(HEX_SIDES).fill(minVisibility);
+
+            // Rotation state
+            let pentAngle = 0;
+            let hexAngle = 0;
+
+            // ──────────────────────────────────────
+            // Helper: average amplitude for a band
+            // ──────────────────────────────────────
+            function getBandAverage(freqData, startIndex, endIndex) {
+                if (!freqData) return 0;
+                let sum = 0;
+                let count = 0;
+                const len = freqData.length;
+                for (let i = startIndex; i < endIndex && i < len; i++) {
+                    sum += freqData[i];
+                    count++;
+                }
+                return count ? (sum / count) / 255 : 0;
+            }
+
+            // ──────────────────────────────────────
+            // Draw loop
+            // ──────────────────────────────────────
+            function draw() {
+                requestAnimationFrame(draw);
+
+                // 1. Get audio data
+                const data = window.parent && window.parent.getVisualizerData
+                    ? window.parent.getVisualizerData()
+                    : null;
+                const freqData = data ? data.frequencyData : null;
+
+                // 2. Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // 3. Compute raw band amplitudes (if audio available)
+                let rawPent = [];
+                let rawHex = [];
+                if (freqData) {
+                    const totalBins = freqData.length;
+                    // Pent bands: lowest portion
+                    const pentBinSize = Math.floor(totalBins / (PENT_SIDES + 2)); // give them lower range
+                    for (let i = 0; i < PENT_SIDES; i++) {
+                        const start = i * pentBinSize;
+                        const end = (i + 1) * pentBinSize;
+                        rawPent.push(getBandAverage(freqData, start, end));
+                    }
+                    // Hex bands: slightly higher portion
+                    const hexBinStart = Math.floor(totalBins * 0.15);
+                    const hexRange = totalBins - hexBinStart;
+                    const hexBinSize = Math.floor(hexRange / HEX_SIDES);
+                    for (let i = 0; i < HEX_SIDES; i++) {
+                        const start = hexBinStart + i * hexBinSize;
+                        const end = hexBinStart + (i + 1) * hexBinSize;
+                        rawHex.push(getBandAverage(freqData, start, end));
+                    }
+                } else {
+                    // Resting state: tiny pulse
+                    rawPent = new Array(PENT_SIDES).fill(minVisibility);
+                    rawHex = new Array(HEX_SIDES).fill(minVisibility);
+                }
+
+                // 4. Smooth band values
+                for (let i = 0; i < PENT_SIDES; i++) {
+                    pentBands[i] += (rawPent[i] - pentBands[i]) * smoothing;
+                    pentBands[i] = Math.max(minVisibility, pentBands[i]);
+                }
+                for (let i = 0; i < HEX_SIDES; i++) {
+                    hexBands[i] += (rawHex[i] - hexBands[i]) * smoothing;
+                    hexBands[i] = Math.max(minVisibility, hexBands[i]);
+                }
+
+                // 5. Compute rotation speeds based on overall energy
+                const pentAvg = pentBands.reduce((a, b) => a + b, 0) / PENT_SIDES;
+                const hexAvg = hexBands.reduce((a, b) => a + b, 0) / HEX_SIDES;
+                const baseSpeed = 0.008;
+                pentAngle += baseSpeed + pentAvg * 0.025;
+                hexAngle -= (baseSpeed + hexAvg * 0.022); // opposite direction
+
+                // 6. Geometry parameters
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+                const minDim = Math.min(canvas.width, canvas.height);
+                const pentBaseRadius = minDim * 0.32;
+                const hexBaseRadius = minDim * 0.44;
+                const displacementMax = minDim * 0.08;   // how much vertices can move outward
+
+                // 7. Draw hexagon first (behind) with cyan-ish glow
+                drawPolygon(cx, cy, HEX_SIDES, hexBaseRadius, hexAngle, hexBands, displacementMax, '#7df9ff', 0.85);
+
+                // 8. Draw pentagon in front with warm white
+                drawPolygon(cx, cy, PENT_SIDES, pentBaseRadius, pentAngle, pentBands, displacementMax, '#ffffff', 0.95);
+
+                // 9. Optional: tiny central dot pulsing with overall loudness
+                const overallAmp = (pentAvg + hexAvg) / 2;
+                const dotRadius = 2 + overallAmp * 6;
+                ctx.beginPath();
+                ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255,255,255,${0.4 + overallAmp * 0.5})`;
+                ctx.fill();
+            }
+
+            // ──────────────────────────────────────
+            // Draw a polygon with conditional edges
+            // ──────────────────────────────────────
+            function drawPolygon(cx, cy, sides, baseRadius, angle, bandAmps, maxDisplace, color, baseAlpha) {
+                if (sides < 3) return;
+
+                // Calculate vertex positions with radial displacement
+                const vertices = [];
+                for (let i = 0; i < sides; i++) {
+                    const vertexAngle = angle + (i / sides) * Math.PI * 2;
+                    // Displacement: map band amplitude (0..1) to extra radius
+                    const amp = bandAmps[i] || 0;
+                    const r = baseRadius + amp * maxDisplace;
+                    const x = cx + Math.cos(vertexAngle) * r;
+                    const y = cy + Math.sin(vertexAngle) * r;
+                    vertices.push({ x, y, amp });
+                }
+
+                // Draw edges: each edge i connects vertex i to i+1 (loop)
+                ctx.save();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.8;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 6;
+                ctx.lineCap = 'round';
+
+                for (let i = 0; i < sides; i++) {
+                    const v1 = vertices[i];
+                    const v2 = vertices[(i + 1) % sides];
+                    // Edge visibility based on the average amplitude of the two connected vertices
+                    const edgeAmp = (v1.amp + v2.amp) / 2;
+                    // Threshold: edge fully invisible if average < 0.08, fully visible above 0.18
+                    const thresholdLow = 0.08;
+                    const thresholdHigh = 0.2;
+                    let visibility = 0;
+                    if (edgeAmp > thresholdLow) {
+                        visibility = Math.min(1, (edgeAmp - thresholdLow) / (thresholdHigh - thresholdLow));
+                    }
+                    visibility = Math.max(0, visibility);
+
+                    if (visibility > 0.01) {
+                        ctx.globalAlpha = baseAlpha * visibility;
+                        ctx.beginPath();
+                        ctx.moveTo(v1.x, v1.y);
+                        ctx.lineTo(v2.x, v2.y);
+                        ctx.stroke();
+                    }
+                }
+
+                // Optionally draw faint radial lines from center to each vertex (always visible, subtle)
+                ctx.globalAlpha = 0.18;
+                ctx.lineWidth = 1.0;
+                ctx.shadowBlur = 3;
+                for (let i = 0; i < sides; i++) {
+                    const v = vertices[i];
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(v.x, v.y);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            // Start the animation
+            draw();
+        })();
+    </script>
+</body>
+</html>

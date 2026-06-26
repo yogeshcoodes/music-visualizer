@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: transparent; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; background-color: #000; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Parameters
+        const numBars = 120; // Dense bars
+        const binsToUse = 150; 
+        
+        // Array to track the floating dots
+        let peaks = new Array(numBars).fill(0);
+
+        function draw() {
+            requestAnimationFrame(draw);
+            
+            // Clear the background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const baseRadius = Math.min(centerX, centerY) * 0.35; 
+            
+            // Styling
+            const circumference = 2 * Math.PI * baseRadius;
+            ctx.lineWidth = Math.max((circumference / numBars) * 0.6, 1.5); 
+            ctx.strokeStyle = '#ffffff'; 
+            ctx.fillStyle = '#ffffff'; // For the floating dots
+            ctx.lineCap = 'round';
+            ctx.shadowBlur = 0; 
+            
+            const freqData = data && data.frequencyData ? data.frequencyData : null;
+
+            for (let i = 0; i < numBars; i++) {
+                // Calculate the angle for this specific bar
+                const angle = (i / numBars) * Math.PI * 2 - (Math.PI / 2);
+                
+                let height = 0;
+                
+                if (freqData) {
+                    const binIndex = Math.floor((i / numBars) * binsToUse);
+                    const value = freqData[binIndex];
+                    
+                    // We use an exponent to make the loud spikes pop out sharply 
+                    // while keeping the quiet frequencies closer to the base ring
+                    const normalized = value / 255;
+                    height = Math.pow(normalized, 1.5) * (Math.min(centerX, centerY) * 0.4);
+                }
+                
+                // Ensure a minimum height so silent spots are still visible
+                if (height < 2) height = 2;
+
+                // --- 1. DRAW THE BARS ---
+                // The bars project roughly 75% outward and 25% inward from the base radius
+                const innerR = baseRadius - (height * 0.25);
+                const outerR = baseRadius + (height * 0.75);
+
+                const startX = centerX + Math.cos(angle) * innerR;
+                const startY = centerY + Math.sin(angle) * innerR;
+                const endX = centerX + Math.cos(angle) * outerR;
+                const endY = centerY + Math.sin(angle) * outerR;
+
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+
+                // --- 2. DRAW THE FLOATING PARTICLES ---
+                // Update the peak value for this bar
+                if (height > peaks[i]) {
+                    peaks[i] = height; // Push the dot up immediately
+                } else {
+                    peaks[i] -= 1.5; // Slowly decay the dot downward (gravity)
+                    if (peaks[i] < height) peaks[i] = height; // Don't let it fall below the current bar
+                }
+
+                // Draw the dot just a few pixels past the tracked peak
+                const dotOffset = 8; // Gap between the peak and the dot
+                const dotR = baseRadius + (peaks[i] * 0.75) + dotOffset;
+                
+                const dotX = centerX + Math.cos(angle) * dotR;
+                const dotY = centerY + Math.sin(angle) * dotR;
+
+                ctx.beginPath();
+                // Draw a tiny circle for the particle
+                ctx.arc(dotX, dotY, ctx.lineWidth * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        draw();
+    </script>
+</body>
+</html>

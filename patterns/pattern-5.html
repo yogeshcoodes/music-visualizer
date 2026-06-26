@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4 snakes · full range</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            cursor: default;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        (() => {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            let W, H;
+
+            // ---------- CONFIG ----------
+            const NUM_POINTS = 10;
+            const SEGMENT_LENGTH = 18;
+            const BOUNCE_MARGIN = 40;
+            const BURST_FRAMES = 14;
+            const ONSET_THRESHOLD = 0.008; // very sensitive
+            const ATTACK_THRESHOLD = 0.008;
+
+            // ---------- SNAKE DEFINITIONS (relative band splits) ----------
+            // The frequency range will be divided into 4 equal parts
+            const snakeDefs = [
+                { label: 'kick', bandLow: 0, bandHigh: 0.25, thickness: 5.5, turnSens: 0.4 },
+                { label: 'low-mid', bandLow: 0.25, bandHigh: 0.50, thickness: 4.0, turnSens: 0.32 },
+                { label: 'high-mid', bandLow: 0.50, bandHigh: 0.75, thickness: 2.8, turnSens: 0.25 },
+                { label: 'high', bandLow: 0.75, bandHigh: 1.0, thickness: 2.0, turnSens: 0.18 },
+            ];
+
+            // ---------- STATE ----------
+            let snakes = [];
+
+            // ---------- RESIZE ----------
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+
+                snakes = snakeDefs.map((def) => {
+                    const cx = W / 2 + (Math.random() - 0.5) * W * 0.6;
+                    const cy = H / 2 + (Math.random() - 0.5) * H * 0.6;
+                    const pts = [];
+                    for (let i = 0; i < NUM_POINTS; i++) {
+                        pts.push({ x: cx, y: cy + i * SEGMENT_LENGTH });
+                    }
+                    return {
+                        points: pts,
+                        angle: Math.random() * Math.PI * 2,
+                        prevEnergy: 0,
+                        burstRemaining: 0,
+                        burstSpeed: 0,
+                        burstTurn: 0,
+                        smoothEnergy: 0,
+                        bandLow: def.bandLow,
+                        bandHigh: def.bandHigh,
+                        thickness: def.thickness,
+                        turnSens: def.turnSens,
+                    };
+                });
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ---------- HELPERS ----------
+            function lerp(a, b, t) { return a + (b - a) * t; }
+
+            // ---------- DRAW ----------
+            function draw() {
+                requestAnimationFrame(draw);
+
+                const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+
+                if (!data || !data.frequencyData) {
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, W, H);
+                    drawSnakes(snakes);
+                    return;
+                }
+
+                const freq = data.frequencyData;
+                const len = freq.length;
+
+                // ---- Compute band energies using relative splits ----
+                const energies = snakes.map((snake) => {
+                    const startIdx = Math.floor(snake.bandLow * len);
+                    const endIdx = Math.floor(snake.bandHigh * len) - 1;
+                    const count = endIdx - startIdx + 1;
+                    if (count <= 0) return 0;
+                    let sum = 0;
+                    for (let i = startIdx; i <= endIdx && i < len; i++) {
+                        sum += freq[i];
+                    }
+                    let avg = sum / (count * 255);
+                    // Boost sensitivity significantly
+                    avg = avg * 4.5;
+                    avg = Math.min(avg, 1.8);
+                    return avg;
+                });
+
+                // ---- Update each snake ----
+                snakes.forEach((snake, idx) => {
+                    const rawEnergy = energies[idx] || 0;
+                    snake.smoothEnergy = lerp(snake.smoothEnergy, rawEnergy, 0.3);
+
+                    // --- Onset detection (very sensitive) ---
+                    const onset = (rawEnergy > ONSET_THRESHOLD && snake.prevEnergy <= ONSET_THRESHOLD) ? 1 : 0;
+                    const rising = rawEnergy - snake.prevEnergy;
+                    const attackTrigger = (rising > ATTACK_THRESHOLD && rawEnergy > 0.02) ? 1 : 0;
+
+                    if (onset > 0 || attackTrigger > 0) {
+                        const intensity = Math.min(rawEnergy * 2.0, 1.0);
+                        snake.burstRemaining = BURST_FRAMES;
+                        const baseSpeed = 3.0 + 5.0 * intensity;
+                        // Slight band-dependent scaling
+                        const bandScale = 1.0 - (idx * 0.08);
+                        snake.burstSpeed = baseSpeed * bandScale;
+                        const turnAmount = (Math.random() - 0.5) * 2.8 * snake.turnSens * (1 + intensity);
+                        snake.burstTurn = turnAmount;
+                    }
+
+                    // ---- Movement ----
+                    let currentSpeed = 0;
+                    let currentTurn = 0;
+                    if (snake.burstRemaining > 0) {
+                        const progress = 1 - (snake.burstRemaining / BURST_FRAMES);
+                        const decay = 1 - progress * 0.9;
+                        currentSpeed = snake.burstSpeed * decay;
+                        currentTurn = snake.burstTurn * decay;
+                        snake.burstRemaining--;
+                    } else {
+                        currentSpeed = 0;
+                        currentTurn = 0;
+                    }
+
+                    // Apply movement
+                    snake.angle += currentTurn;
+                    if (snake.angle > Math.PI) snake.angle -= Math.PI * 2;
+                    if (snake.angle < -Math.PI) snake.angle += Math.PI * 2;
+
+                    const moveX = Math.cos(snake.angle) * currentSpeed;
+                    const moveY = Math.sin(snake.angle) * currentSpeed;
+                    const head = snake.points[0];
+                    head.x += moveX;
+                    head.y += moveY;
+
+                    if (currentSpeed > 0.1) {
+                        if (head.x < BOUNCE_MARGIN) { head.x = BOUNCE_MARGIN;
+                            snake.angle = -snake.angle + (Math.random() - 0.5) * 0.3; }
+                        if (head.x > W - BOUNCE_MARGIN) { head.x = W - BOUNCE_MARGIN;
+                            snake.angle = -snake.angle + (Math.random() - 0.5) * 0.3; }
+                        if (head.y < BOUNCE_MARGIN) { head.y = BOUNCE_MARGIN;
+                            snake.angle = Math.PI - snake.angle + (Math.random() - 0.5) * 0.3; }
+                        if (head.y > H - BOUNCE_MARGIN) { head.y = H - BOUNCE_MARGIN;
+                            snake.angle = Math.PI - snake.angle + (Math.random() - 0.5) * 0.3; }
+                    }
+
+                    // Update chain
+                    for (let i = 1; i < NUM_POINTS; i++) {
+                        const prev = snake.points[i - 1];
+                        const curr = snake.points[i];
+                        const dx = curr.x - prev.x;
+                        const dy = curr.y - prev.y;
+                        const d = Math.hypot(dx, dy);
+                        if (d > 0.001) {
+                            const ratio = SEGMENT_LENGTH / d;
+                            curr.x = prev.x + dx * ratio;
+                            curr.y = prev.y + dy * ratio;
+                        } else {
+                            curr.x = prev.x + SEGMENT_LENGTH;
+                            curr.y = prev.y;
+                        }
+                    }
+
+                    snake.prevEnergy = rawEnergy;
+                });
+
+                // ---- Draw ----
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, W, H);
+                drawSnakes(snakes);
+            }
+
+            // ---- Draw all snakes ----
+            function drawSnakes(snakes) {
+                snakes.forEach((snake) => {
+                    const pts = snake.points;
+                    const energy = snake.smoothEnergy || 0;
+                    const thickness = snake.thickness * (0.3 + 0.9 * Math.min(energy * 1.5, 1.0));
+                    const alpha = 0.3 + 0.7 * Math.min(energy * 1.5, 1.0);
+
+                    // Outer glow
+                    ctx.save();
+                    ctx.shadowColor = `rgba(255,255,255,${0.05 * (1 + energy)})`;
+                    ctx.shadowBlur = 15;
+                    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.9})`;
+                    ctx.lineWidth = thickness;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) {
+                        ctx.lineTo(pts[i].x, pts[i].y);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // Bright core
+                    ctx.save();
+                    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.5})`;
+                    ctx.lineWidth = Math.max(0.5, thickness * 0.2);
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) {
+                        ctx.lineTo(pts[i].x, pts[i].y);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // Joint dots
+                    ctx.fillStyle = `rgba(255,255,255,${0.06 * (1 + energy)})`;
+                    for (let i = 0; i < pts.length; i++) {
+                        const p = pts[i];
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 0.8, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+            }
+
+            draw();
+        })();
+    </script>
+</body>
+</html>

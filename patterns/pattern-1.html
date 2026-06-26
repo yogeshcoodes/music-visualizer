@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: transparent; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; background-color: #000; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function draw() {
+            requestAnimationFrame(draw);
+            
+            // Clear the background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+            
+            // Define how many individual bars we want to display. 
+            // The image has roughly 30-40 bars, making them distinct and chunky.
+            const numBars = 45; 
+            const binsToUse = 150; // The range of frequency bins we actually care about
+            
+            const sliceWidth = canvas.width / numBars;
+            
+            // Set up the styling for the bars
+            ctx.strokeStyle = '#ffffff'; 
+            ctx.lineCap = 'round';
+            // Make the bar width slightly smaller than the slice width to leave a gap between them
+            ctx.lineWidth = Math.max(sliceWidth * 0.4, 4); 
+            ctx.shadowBlur = 0; 
+            
+            // Resting state: if no audio is playing, draw a straight line of flat dots
+            if (!data || !data.frequencyData) {
+                for (let i = 0; i < numBars; i++) {
+                    const x = i * sliceWidth + (sliceWidth / 2);
+                    ctx.beginPath();
+                    // Drawing a microscopic line with round caps essentially renders a perfect circle (dot)
+                    ctx.moveTo(x, canvas.height / 2 - 0.1);
+                    ctx.lineTo(x, canvas.height / 2 + 0.1);
+                    ctx.stroke();
+                }
+                return;
+            }
+
+            const freqData = data.frequencyData;
+            const centerY = canvas.height / 2;
+
+            for (let i = 0; i < numBars; i++) {
+                // Space out our selected bars evenly across the frequency bins we care about
+                const binIndex = Math.floor(i * (binsToUse / numBars));
+                const value = freqData[binIndex];
+                
+                // Map the frequency amplitude (0-255) to a vertical height
+                let height = (value / 255) * (canvas.height / 3);
+                
+                // Ensure there is always a minimum height so silent spots stay as dots
+                if (height < 0.1) height = 0.1;
+
+                // Center the bar within its slice
+                const x = i * sliceWidth + (sliceWidth / 2);
+
+                // Draw a distinct vertical line spanning symmetrically up and down from the center
+                ctx.beginPath();
+                ctx.moveTo(x, centerY - height);
+                ctx.lineTo(x, centerY + height);
+                ctx.stroke();
+            }
+        }
+
+        draw();
+    </script>
+</body>
+</html>

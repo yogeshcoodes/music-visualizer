@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: transparent; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; background-color: #000; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function draw() {
+            requestAnimationFrame(draw);
+            
+            // Clear the background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const data = window.parent.getVisualizerData ? window.parent.getVisualizerData() : null;
+            
+            // Circular visualizer parameters
+            const numBars = 100; // Increased bar count for a smoother circle
+            const binsToUse = 150; 
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // The empty space in the middle of the circle
+            const baseRadius = Math.min(centerX, centerY) * 0.45; 
+            
+            // Calculate a responsive line width based on the circle's circumference
+            const circumference = 2 * Math.PI * baseRadius;
+            ctx.lineWidth = Math.max((circumference / numBars) * 0.5, 2); 
+            ctx.strokeStyle = '#ffffff'; 
+            ctx.lineCap = 'round';
+            ctx.shadowBlur = 0; 
+            
+            // Resting state: Draw a dotted circle if no audio is playing
+            if (!data || !data.frequencyData) {
+                for (let i = 0; i < numBars; i++) {
+                    const angle = (i / numBars) * Math.PI * 2;
+                    
+                    const x = centerX + Math.cos(angle) * baseRadius;
+                    const y = centerY + Math.sin(angle) * baseRadius;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    // Draw a microscopic line outward to render a perfect dot with 'round' lineCap
+                    ctx.lineTo(
+                        centerX + Math.cos(angle) * (baseRadius + 0.1), 
+                        centerY + Math.sin(angle) * (baseRadius + 0.1)
+                    );
+                    ctx.stroke();
+                }
+                return;
+            }
+
+            const freqData = data.frequencyData;
+
+            for (let i = 0; i < numBars; i++) {
+                const binIndex = Math.floor((i / numBars) * binsToUse);
+                const value = freqData[binIndex];
+                
+                // Map the frequency amplitude to a height that projects outward
+                // Max height is roughly 40% of the screen space from the base radius
+                let height = (value / 255) * (Math.min(centerX, centerY) * 0.4);
+                
+                if (height < 0.1) height = 0.1; // Keep silent spots as dots
+
+                // Calculate the angle for this specific bar.
+                // Subtracting Math.PI / 2 rotates the start point to the top (12 o'clock)
+                const angle = (i / numBars) * Math.PI * 2 - (Math.PI / 2);
+
+                // Start point (on the base circle)
+                const startX = centerX + Math.cos(angle) * baseRadius;
+                const startY = centerY + Math.sin(angle) * baseRadius;
+
+                // End point (projected outward by 'height')
+                const endX = centerX + Math.cos(angle) * (baseRadius + height);
+                const endY = centerY + Math.sin(angle) * (baseRadius + height);
+
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            }
+        }
+
+        draw();
+    </script>
+</body>
+</html>

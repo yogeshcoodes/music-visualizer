@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Horizontal Lines Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ---- Configuration ----
+            const numLines = 100;          // total horizontal lines filling the height
+            const minLineWidth = 2;        // minimum visible width (in pixels) when audio is silent
+            const smoothing = 0.35;        // how quickly lines respond (lower = smoother)
+
+            // Array to hold smoothed amplitude for each line
+            let smoothedValues = new Array(numLines).fill(0);
+
+            function draw() {
+                requestAnimationFrame(draw);
+
+                // 1. Get audio data (if available)
+                const data = window.parent && window.parent.getVisualizerData 
+                    ? window.parent.getVisualizerData() 
+                    : null;
+                const freqData = data ? data.frequencyData : null;
+
+                // 2. Clear canvas with pure black
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // 3. Calculate geometry
+                const lineHeight = canvas.height / numLines;
+                const usableBins = freqData ? freqData.length : 256;
+
+                // 4. Update smoothed values
+                for (let i = 0; i < numLines; i++) {
+                    let rawAmp = 0;
+
+                    if (freqData) {
+                        // Map each line to a frequency bin (or average a small range)
+                        const binIndex = Math.floor((i / numLines) * usableBins);
+                        const safeIndex = Math.min(binIndex, freqData.length - 1);
+                        rawAmp = freqData[safeIndex] / 255; // 0..1
+                    } else {
+                        // Resting state: very small pseudo‑random pulse to show the visual is alive
+                        rawAmp = 0.04;
+                    }
+
+                    // Smooth the amplitude
+                    if (smoothedValues[i] === undefined) smoothedValues[i] = rawAmp;
+                    smoothedValues[i] += (rawAmp - smoothedValues[i]) * smoothing;
+                }
+
+                // 5. Draw the lines (white, 1px tall, no gaps)
+                ctx.fillStyle = '#ffffff';
+                for (let i = 0; i < numLines; i++) {
+                    const amp = smoothedValues[i];
+
+                    // Convert amplitude to pixel width (minimum width ensures visibility)
+                    const lineWidth = Math.max(minLineWidth, amp * canvas.width);
+
+                    // Y position of this horizontal line
+                    const y = i * lineHeight;
+
+                    // Draw a single 1px tall rectangle as our "straight line"
+                    ctx.fillRect(0, y, lineWidth, Math.max(1, lineHeight));
+                }
+            }
+
+            // Start the animation
+            draw();
+        })();
+    </script>
+</body>
+</html>

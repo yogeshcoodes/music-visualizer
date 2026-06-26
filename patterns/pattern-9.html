@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speaker Cone - Tuned</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; background: #0a0a0a; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ════════════════════════════════
+            // FINAL TUNED PARAMETERS
+            // ════════════════════════════════
+            const BASS_START_HZ = 20;
+            const BASS_END_HZ = 58;
+            const THRESHOLD = 0.25;
+            const POWER_CURVE = 1.90;
+            const SMOOTHING = 0.32;
+            const TREBLE_WEIGHT = 0.03;
+            const MAX_EXCURSION = 0.05; // relative to base cone radius
+
+            const SAMPLE_RATE = 44100;
+
+            // Envelope state
+            let envelope = 0.0;
+
+            function getBandEnergy(freqData, lowFreq, highFreq) {
+                if (!freqData || freqData.length === 0) return 0;
+                const fftSize = freqData.length * 2;
+                const binWidth = SAMPLE_RATE / fftSize;
+                const lowBin = Math.floor(lowFreq / binWidth);
+                const highBin = Math.ceil(highFreq / binWidth);
+                let sum = 0, count = 0;
+                for (let i = lowBin; i <= highBin && i < freqData.length; i++) {
+                    sum += freqData[i];
+                    count++;
+                }
+                return count ? (sum / count) / 255 : 0;
+            }
+
+            // Drawing helpers (unchanged)
+            function drawBasket(cx, cy, outerRadius) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(cx, cy, outerRadius, 0, Math.PI*2);
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = Math.max(3, outerRadius * 0.05);
+                ctx.stroke();
+                const ribs = 8;
+                for (let i = 0; i < ribs; i++) {
+                    const angle = (i / ribs) * Math.PI*2;
+                    const dx = Math.cos(angle), dy = Math.sin(angle);
+                    ctx.beginPath();
+                    ctx.moveTo(cx + dx*(outerRadius-3), cy + dy*(outerRadius-3));
+                    ctx.lineTo(cx + dx*(outerRadius+8), cy + dy*(outerRadius+8));
+                    ctx.strokeStyle = '#1a1a1a';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            function drawSurround(cx, cy, outerRadius, innerRadius) {
+                if (innerRadius >= outerRadius-1) return;
+                ctx.save();
+                const grad = ctx.createRadialGradient(cx, cy, innerRadius, cx, cy, outerRadius);
+                grad.addColorStop(0, '#090909');
+                grad.addColorStop(0.5, '#1f1f1f');
+                grad.addColorStop(1, '#030303');
+                ctx.beginPath();
+                ctx.arc(cx, cy, outerRadius, 0, Math.PI*2);
+                ctx.arc(cx, cy, innerRadius, 0, Math.PI*2, true);
+                ctx.closePath();
+                ctx.fillStyle = grad;
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx, cy, innerRadius, 0, Math.PI*2);
+                ctx.strokeStyle = '#444';
+                ctx.lineWidth = Math.max(1.5, innerRadius*0.04);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawCone(cx, cy, radius) {
+                const grad = ctx.createRadialGradient(cx-2, cy-2, radius*0.1, cx, cy, radius);
+                grad.addColorStop(0, '#111');
+                grad.addColorStop(0.3, '#1e1e1e');
+                grad.addColorStop(0.7, '#383838');
+                grad.addColorStop(1, '#2a2a2a');
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI*2);
+                ctx.fillStyle = grad;
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx-3, cy-3, radius*0.85, -Math.PI*0.7, -Math.PI*0.2);
+                ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                ctx.lineWidth = radius*0.07;
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawDustCap(cx, cy, radius) {
+                const grad = ctx.createRadialGradient(cx-2, cy-2, radius*0.05, cx, cy, radius);
+                grad.addColorStop(0, '#fff');
+                grad.addColorStop(0.2, '#ddd');
+                grad.addColorStop(0.5, '#555');
+                grad.addColorStop(1, '#1a1a1a');
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI*2);
+                ctx.fillStyle = grad;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function draw() {
+                requestAnimationFrame(draw);
+
+                const data = window.parent && window.parent.getVisualizerData
+                    ? window.parent.getVisualizerData()
+                    : null;
+                const freqData = data ? data.frequencyData : null;
+
+                // Extract bass and treble energies with tuned parameters
+                const bassEnergy = freqData ? getBandEnergy(freqData, BASS_START_HZ, BASS_END_HZ) : 0;
+                const trebleEnergy = freqData ? getBandEnergy(freqData, 3000, 8000) : 0;
+
+                // Compute cone drive
+                let drive = 0;
+                if (bassEnergy > THRESHOLD) {
+                    const normalized = (bassEnergy - THRESHOLD) / (1 - THRESHOLD);
+                    drive = Math.pow(normalized, POWER_CURVE);
+                    drive = Math.min(1, drive);
+                }
+                // Tiny treble shimmer
+                const trebleContribution = trebleEnergy * TREBLE_WEIGHT;
+                drive = Math.min(1, drive + trebleContribution);
+
+                // Smooth envelope
+                envelope += (drive - envelope) * SMOOTHING;
+                if (envelope < 0.0005) envelope = 0;
+
+                // Geometry
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+                const mDim = Math.min(canvas.width, canvas.height);
+                const baseConeRadius = mDim * 0.35;
+                const surroundWidth = mDim * 0.06;
+                const surroundOuter = baseConeRadius + surroundWidth;
+
+                const coneRadius = baseConeRadius + envelope * (baseConeRadius * MAX_EXCURSION);
+                const clampedConeRadius = Math.min(surroundOuter - 2, Math.max(baseConeRadius * 0.75, coneRadius));
+                const dustCapRadius = clampedConeRadius * 0.22;
+
+                // Clear
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#0d0d0d';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Draw speaker
+                drawBasket(cx, cy, surroundOuter + 6);
+                drawSurround(cx, cy, surroundOuter, clampedConeRadius);
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(cx+4, cy+4, clampedConeRadius, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fill();
+                ctx.restore();
+
+                drawCone(cx, cy, clampedConeRadius);
+                drawDustCap(cx, cy, dustCapRadius);
+            }
+
+            draw();
+        })();
+    </script>
+</body>
+</html>
