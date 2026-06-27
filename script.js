@@ -11,6 +11,7 @@ const iconPause = document.getElementById('icon-pause');
 const seekBar = document.getElementById('seek-bar');
 const currentTimeEl = document.getElementById('current-time');
 const durationEl = document.getElementById('duration');
+const qualitySelect = document.getElementById('video-quality');
 
 let frequencyData, timeDomainData;
 let isRecording = false;
@@ -50,7 +51,6 @@ function processAudio() {
     analyser.getByteTimeDomainData(timeDomainData);
 }
 
-// Expose data to iframe patterns
 window.getVisualizerData = () => {
     return { frequencyData, timeDomainData };
 };
@@ -99,7 +99,9 @@ audioEl.addEventListener('timeupdate', () => {
     if (isRecording && audioEl.duration) {
         const percent = Math.min(((audioEl.currentTime / audioEl.duration) * 100), 100).toFixed(1);
         document.getElementById('progress-bar').style.width = `${percent}%`;
-        document.getElementById('progress-text').textContent = `${percent}%`;
+        
+        // Reminder appended to prevent tab throttling
+        document.getElementById('progress-text').textContent = `${percent}% (Do not switch tabs!)`;
     }
 });
 
@@ -139,16 +141,11 @@ document.getElementById('audio-upload').addEventListener('change', function (e) 
     });
 });
 
-// ---------- UI: pattern & aspect ratio ----------
+// ---------- UI: pattern change ----------
 const iframe = document.getElementById('pattern-frame');
-const wrapper = document.getElementById('wrapper');
 
 document.getElementById('pattern-select').addEventListener('change', (e) => {
     iframe.src = e.target.value;
-});
-
-document.getElementById('aspect-ratio').addEventListener('change', (e) => {
-    wrapper.className = `canvas-wrapper aspect-${e.target.value.replace(':', '-')}`;
 });
 
 // ---------- Recording ----------
@@ -169,17 +166,51 @@ recordBtn.addEventListener('click', () => {
         const frameCanvas = frameDoc.querySelector('canvas');
         if (!frameCanvas) throw new Error('Canvas not found inside pattern iframe.');
 
-        const canvasStream = frameCanvas.captureStream(60);
+        // 1. Configure Quality Settings
+        let fps = 30;
+        let videoBitsPerSecond = 2500000; // 2.5 Mbps
+
+        if (qualitySelect.value === 'high') {
+            fps = 60;
+            videoBitsPerSecond = 6000000; // 6 Mbps
+        } else if (qualitySelect.value === 'low') {
+            fps = 24;
+            videoBitsPerSecond = 1000000; // 1 Mbps
+        }
+
+        const canvasStream = frameCanvas.captureStream(fps);
         const combinedStream = new MediaStream([
             ...canvasStream.getVideoTracks(),
             ...mediaDest.stream.getAudioTracks()
         ]);
 
-        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-            ? 'video/webm;codecs=vp9'
-            : 'video/webm';
+        // 2. MP4 Prioritization & H264 Fallback
+        const preferredMimeTypes = [
+            'video/mp4;codecs=avc1,mp4a.40.2', // Strict MP4 check (Supported in Safari/Mobile)
+            'video/mp4',
+            'video/webm;codecs=h264,opus',     // H264 webm is universally playable and easily converted
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm'
+        ];
+        
+        let selectedMimeType = '';
+        for (let type of preferredMimeTypes) {
+            if (MediaRecorder.isTypeSupported(type)) {
+                selectedMimeType = type;
+                break;
+            }
+        }
 
-        mediaRecorder = new MediaRecorder(combinedStream, { mimeType });
+        if (!selectedMimeType) {
+            throw new Error('No supported video MIME types found in this browser.');
+        }
+
+        mediaRecorder = new MediaRecorder(combinedStream, { 
+            mimeType: selectedMimeType,
+            videoBitsPerSecond: videoBitsPerSecond
+        });
+        
         recordedChunks = [];
 
         mediaRecorder.ondataavailable = (e) => {
@@ -188,11 +219,19 @@ recordBtn.addEventListener('click', () => {
 
         mediaRecorder.onstop = () => {
             if (!isRecording) return;
-            const blob = new Blob(recordedChunks, { type: mimeType });
+            const blob = new Blob(recordedChunks, { type: selectedMimeType });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Visualizer-${Date.now()}.webm`;
+            
+            // Map the selected mime type to the correct file extension
+            let ext = 'webm';
+            if (selectedMimeType.includes('mp4')) {
+                ext = 'mp4';
+            }
+            
+            a.download = `Visualizer-${Date.now()}.${ext}`;
+            
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -210,12 +249,18 @@ recordBtn.addEventListener('click', () => {
             updatePlayState(true);
         }).catch(() => {});
 
-        mediaRecorder.start(1000);
+        // 3. Fix: Removed the (1000) argument. 
+        // Chunking the stream often breaks canvas visualizer recordings. 
+        // Calling start() without arguments records one continuous, smooth blob.
+        mediaRecorder.start(); 
         isRecording = true;
 
         overlay.classList.remove('hidden');
         document.getElementById('progress-bar').style.width = '0%';
-        document.getElementById('progress-text').textContent = '0%';
+        document.getElementById('progress-text').textContent = '0% (Do not switch tabs!)';
+
+        // Warning to prevent the exact bug where visuals hang but audio plays
+        console.warn("Recording started. DO NOT minimize this window or switch to another tab. Browsers pause visual animations on inactive tabs, which will cause your recorded video to freeze!");
 
     } catch (e) {
         alert('Recording unavailable.\nRun via local server (Live Server / localhost) to record video.\n\n' + e.message);
@@ -251,7 +296,7 @@ toggleBtn.addEventListener('click', () => {
 
 // Close sidebar when clicking on the visualizer area (mobile only)
 document.querySelector('.visualizer-container').addEventListener('click', (e) => {
-    if (window.innerWidth <= 960 && sidebar.classList.contains('open')) {
+    if (window.innerWidth <= 768 && sidebar.classList.contains('open')) {
         if (!e.target.closest('.sidebar-toggle') && !e.target.closest('.sidebar')) {
             sidebar.classList.remove('open');
         }
